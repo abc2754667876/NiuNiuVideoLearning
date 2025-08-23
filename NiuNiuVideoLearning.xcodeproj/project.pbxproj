@@ -17,7 +17,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		B8A713242E58B89700AC57A8 /* NiuNiuVideoLearning.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NiuNiuVideoLearning.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B8A713242E58B89700AC57A8 /* 牛牛看课.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "牛牛看课.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B8A714112E58C46500AC57A8 /* Collections+CoreDataClass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Collections+CoreDataClass.swift"; path = "NiuNiuVideoLearning/CoreData/EntityClasses/Collections+CoreDataClass.swift"; sourceTree = "<group>"; };
 		B8A714122E58C46500AC57A8 /* Collections+CoreDataProperties.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Collections+CoreDataProperties.swift"; path = "NiuNiuVideoLearning/CoreData/EntityClasses/Collections+CoreDataProperties.swift"; sourceTree = "<group>"; };
 		B8A714132E58C46500AC57A8 /* VideoBookmarks+CoreDataClass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "VideoBookmarks+CoreDataClass.swift"; path = "NiuNiuVideoLearning/CoreData/EntityClasses/VideoBookmarks+CoreDataClass.swift"; sourceTree = "<group>"; };
@@ -64,7 +64,7 @@
 		B8A713252E58B89700AC57A8 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				B8A713242E58B89700AC57A8 /* NiuNiuVideoLearning.app */,
+				B8A713242E58B89700AC57A8 /* 牛牛看课.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -91,7 +91,7 @@
 			packageProductDependencies = (
 			);
 			productName = NiuNiuVideoLearning;
-			productReference = B8A713242E58B89700AC57A8 /* NiuNiuVideoLearning.app */;
+			productReference = B8A713242E58B89700AC57A8 /* 牛牛看课.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -285,6 +285,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "牛牛看课";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -301,7 +302,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chengzhizhang.NiuNiuVideoLearning;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "牛牛看课";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -326,6 +327,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "牛牛看课";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -342,7 +344,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = chengzhizhang.NiuNiuVideoLearning;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "牛牛看课";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";

@@ -26,6 +26,7 @@ struct ContentView: View {
 
     var estimatedEndTime: String? {
         guard playerCtl.isPlaying,
+              playerCtl.itemReady,
               let video = selectedVideo else { return nil }
 
         let played = playerCtl.currentTime              // ✅ 实时进度（秒）
@@ -85,6 +86,7 @@ struct ContentView: View {
                                 collection: col,
                                 // ✅ 把“选中视频”的回调从最外层传进去
                                 onSelectVideo: { video in
+                                    playerCtl.isPlaying = false   // 👈 切视频先停
                                     selectedVideo = video
                                 }
                             )
@@ -105,10 +107,14 @@ struct ContentView: View {
                     filePath: path,
                     title: video.name ?? "未命名视频",
                     fileBookmark: video.fileBookmark,
-                    controller: playerCtl            // ✅ 传控制器
+                    controller: playerCtl,            // ✅ 传控制器
+                    videoID: video.id!,                 // ✅ 新增
+                    videoDuration: video.duration,       // ✅ 新增
+                    lastPosition: video.lastPosition        // ✅ 新增
                 )
+                .id(video.id!)   // 👈 切视频时强制重建
             } else {
-                Text("右侧内容区域").foregroundStyle(.secondary)
+                Text("暂无要播放的视频").foregroundStyle(.secondary)
             }
         }
         // ✅ 动态标题：选中视频名，否则默认
@@ -160,6 +166,16 @@ struct ContentView: View {
                 }
                 .onChange(of: playerCtl.isPlaying) {
                     playerCtl.setRate(setRate)
+                    if let id = selectedVideo?.id {
+                        updateLastPosition(id: id, lastPosition: playerCtl.currentTime, context: viewContext)
+                    }
+                }
+                .onChange(of: playerCtl.currentTime) {
+                    if Int(playerCtl.currentTime) % 3 == 0 {
+                        if let id = selectedVideo?.id {
+                            updateLastPosition(id: id, lastPosition: playerCtl.currentTime, context: viewContext)
+                        }
+                    }
                 }
             }
         }
@@ -293,6 +309,7 @@ struct VideosForCollectionView: View {
     @State private var pendingURL: URL?
 
     @State private var id = UUID()
+    @State private var timer: Timer?   // ✅ 定时器引用
     
     init(collectionID: UUID?, onSelect: @escaping (Videos) -> Void) {
         self.onSelect = onSelect
@@ -347,6 +364,17 @@ struct VideosForCollectionView: View {
                 }
             }
             .id(id)
+            .onAppear {
+                // ✅ 启动定时器
+                timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
+                    id = UUID()
+                }
+            }
+            .onDisappear {
+                // ✅ 停掉定时器
+                timer?.invalidate()
+                timer = nil
+            }
             .fileImporter(
                 isPresented: $showFileImporter,
                 allowedContentTypes: [.movie, .video],
@@ -443,7 +471,7 @@ struct VideoRow: View {
             Image(systemName: "play.circle")
                 .imageScale(.large)
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(video.isFinished ? .green : .accentColor)
+                .foregroundStyle(.blue)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.name ?? "未命名视频")
@@ -472,6 +500,8 @@ struct VideoRow: View {
             } else {
                 if !video.isFinished {
                     Text("\(Int(video.lastPosition / video.duration * 100))%")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
                 } else {
                     Image(systemName: "checkmark.circle")
                         .font(.caption)
@@ -524,15 +554,24 @@ struct VideoRow: View {
 }
 
 struct VideoDetailPlayer: View {
+    @Environment(\.managedObjectContext) private var viewContext
+    
     let filePath: String
     let title: String
     var fileBookmark: Data? = nil
     
     @ObservedObject var controller: PlayerController
+    
+    // ✅ 新增：用于写回 Core Data
+    let videoID: UUID
+    let videoDuration: Double
+    let lastPosition: Double    // ✅ 新增
 
     @State private var player = AVPlayer()
     @State private var scopedURL: URL?
     @State private var errorText: String?
+    
+    @State private var loadTicket = UUID()
     
     // ✅ 新增：KVO/通知句柄
     @State private var statusObs: NSKeyValueObservation?
@@ -540,6 +579,13 @@ struct VideoDetailPlayer: View {
     @State private var endObserver: Any?
     
     @State private var enforceTimer: Timer?
+    
+    // ✅ 新增：2 秒保存节流 & 完成标记
+    @State private var lastSavedAt: Date = .distantPast
+    @State private var hasMarkedFinished = false
+    private let saveTick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    @State private var jumpObserver: Any?
+    @State private var itemStatusObs: NSKeyValueObservation?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -567,6 +613,46 @@ struct VideoDetailPlayer: View {
         }
         .onReceive(controller.$rate) { _ in
             if controller.isPlaying { startRateGovernor() }
+        }
+        // ✅ 播放状态改变时立即保存一次当前位置
+        .onChange(of: controller.isPlaying) { _ in
+            savePositionNow()
+        }
+
+        // ✅ 正常播放时每 2 秒保存一次
+        .onReceive(saveTick) { _ in
+            guard controller.isPlaying else { return }
+            savePositionIfNeeded()
+            checkAndMarkFinishedIfNeeded()
+        }
+
+        // ✅ rate 变化时也检查完成（倍速改变会影响到达剩余 20s 的时间点）
+        .onReceive(controller.$rate) { _ in
+            checkAndMarkFinishedIfNeeded()
+        }
+    }
+    
+    // MARK: - 保存当前位置
+    private func savePositionNow() {
+        let pos = controller.currentTime
+        updateLastPosition(id: videoID, lastPosition: pos, context: viewContext)
+        lastSavedAt = Date()
+    }
+
+    private func savePositionIfNeeded() {
+        // 节流：2s 一次
+        if Date().timeIntervalSince(lastSavedAt) >= 2 {
+            savePositionNow()
+        }
+    }
+
+    // MARK: - 剩余 ≤ 20s 标记完成（只标一次）
+    private func checkAndMarkFinishedIfNeeded() {
+        guard !hasMarkedFinished else { return }
+        let remain = max(videoDuration - controller.currentTime, 0)
+        if remain <= 20 {
+            updateIsFinished(id: videoID, isFinished: true, context: viewContext)
+            hasMarkedFinished = true
         }
     }
     
@@ -615,13 +701,24 @@ struct VideoDetailPlayer: View {
         ) { [weak controller] _ in
             controller?.isPlaying = false
         }
+        // ✅ 进度条跳变：立即保存当前位置 & 检查完成
+        jumpObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemTimeJumped,
+            object: nil, queue: .main
+        ) { _ in
+            savePositionNow()
+            checkAndMarkFinishedIfNeeded()
+        }
     }
 
     private func detachObservers() {
         statusObs?.invalidate(); statusObs = nil
         rateObs?.invalidate();   rateObs   = nil
+        itemStatusObs?.invalidate(); itemStatusObs = nil   // ✅
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let jumpObserver { NotificationCenter.default.removeObserver(jumpObserver) }
         endObserver = nil
+        jumpObserver = nil
     }
 
     private func preparedURL() -> URL? {
@@ -646,53 +743,64 @@ struct VideoDetailPlayer: View {
     }
 
     private func prepareAndPlay() {
+        controller.itemReady = false      // 切源先置 false
+        
         errorText = nil
+        loadTicket = UUID()                 // 👈 新工单号
+        hasMarkedFinished = false           // 重置完成标记
+        controller.currentTime = 0          // 切源先把当前时间清零（避免把旧时间带入计算）
 
-        guard let url = preparedURL() else {
-            errorText = "无法构造视频 URL。"
-            return
-        }
+        guard let url = preparedURL() else { errorText = "无法构造视频 URL。"; return }
+        let ticket = loadTicket             // 👈 捕获本次 ticket
 
         let asset = AVURLAsset(url: url)
         let keys = ["playable", "hasProtectedContent", "tracks"]
         asset.loadValuesAsynchronously(forKeys: keys) {
-            var message: String?
-
-            for key in keys {
-                var err: NSError?
-                let status = asset.statusOfValue(forKey: key, error: &err)
-                if status == .failed || status == .cancelled {
-                    message = "读取媒体信息失败（\(key)）：\(err?.localizedDescription ?? "未知错误")"
-                    break
-                }
-            }
-            if message == nil {
-                if asset.hasProtectedContent { message = "此视频受保护/加密（DRM），无法播放。" }
-                else if !asset.isPlayable { message = "视频不可播放（容器或编码不受支持）。" }
-            }
-
+            // ……校验 keys ……
             DispatchQueue.main.async {
-                if let message { self.errorText = message; return }
+                // 若已经切到别的视频了，丢弃这次结果
+                guard ticket == self.loadTicket else { return }     // 👈 防回调串台
 
                 let item = AVPlayerItem(asset: asset)
-                _ = item.observe(\.status, options: [.new, .initial]) { item, _ in
+                self.player.replaceCurrentItem(with: item)
+                self.player.currentItem?.audioTimePitchAlgorithm = .timeDomain
+
+                // 先移除旧观察者
+                self.itemStatusObs?.invalidate()
+
+                self.itemStatusObs = item.observe(\.status, options: [.initial, .new]) { item, _ in
+                    // 回调里也要核对
+                    guard ticket == self.loadTicket else { return } // 👈 再次防串台
+
+                    let plyr = self.player
+                    let ctrl = self.controller
+                    let desired = self.lastPosition
+                    let dur = self.videoDuration
+
                     DispatchQueue.main.async {
                         switch item.status {
-                        case .readyToPlay: self.player.playImmediately(atRate: controller.rate)
+                        case .readyToPlay:
+                            self.controller.itemReady = true   // 👈 ready
+                            let safeLast = max(0, min(desired, max(0, dur - 0.5)))
+                            if safeLast > 1 {
+                                let target = CMTime(seconds: safeLast, preferredTimescale: 600)
+                                plyr.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                                    // 同步 controller.currentTime，避免“把旧时间带过去”
+                                    self.controller.currentTime = safeLast
+                                    if ctrl.isPlaying {
+                                        plyr.playImmediately(atRate: ctrl.rate)
+                                    }
+                                }
+                            } else if ctrl.isPlaying {
+                                plyr.playImmediately(atRate: ctrl.rate)
+                            }
+
                         case .failed:
                             self.errorText = "播放失败：\(item.error?.localizedDescription ?? "未知错误")"
                         case .unknown: break
                         @unknown default: break
                         }
                     }
-                }
-                self.player.replaceCurrentItem(with: item)
-                self.player.currentItem?.audioTimePitchAlgorithm = .timeDomain
-                if controller.isPlaying {
-                    self.player.playImmediately(atRate: controller.rate)
-                    startRateGovernor()
-                } else {
-                    self.player.rate = 0
                 }
             }
         }
@@ -703,6 +811,7 @@ final class PlayerController: ObservableObject {
     @Published var isPlaying = false
     @Published var rate: Float = 1.0
     @Published var currentTime: Double = 0   // ✅ 当前播放秒数（动态刷新）
+    @Published var itemReady: Bool = false   // 👈 当前 item 是否 ready
 
     private weak var player: AVPlayer?
     private var programmaticRateChange = false
