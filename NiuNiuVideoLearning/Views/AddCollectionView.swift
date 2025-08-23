@@ -51,6 +51,7 @@ struct AddCollectionView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .labelsHidden()
             }
             
             Divider()

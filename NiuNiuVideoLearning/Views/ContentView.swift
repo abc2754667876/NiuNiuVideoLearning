@@ -11,6 +11,7 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     
     @State private var showAddCollection = false
+    @State private var showAddVideo = false
     
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \Collections.date, ascending: false)],
@@ -37,14 +38,26 @@ struct ContentView: View {
         .navigationTitle("牛牛看课")
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Button(action: {
-                    showAddCollection = true
-                }) {
-                    Image(systemName: "folder.badge.plus")
-                }
-                .help("新建课程")
-                .sheet(isPresented: $showAddCollection){
-                    AddCollectionView()
+                HStack{
+                    Button(action: {
+                        showAddCollection = true
+                    }) {
+                        Image(systemName: "folder.badge.plus")
+                    }
+                    .help("新建课程")
+                    .sheet(isPresented: $showAddCollection){
+                        AddCollectionView()
+                    }
+                    
+                    Button(action: {
+                        showAddVideo = true
+                    }) {
+                        Image(systemName: "video.badge.plus")
+                    }
+                    .help("导入课程视频")
+                    .sheet(isPresented: $showAddVideo){
+                        AddVideoView()
+                    }
                 }
             }
         }
