@@ -110,11 +110,11 @@
 				};
 			};
 			buildConfigurationList = B8A7131F2E58B89700AC57A8 /* Build configuration list for PBXProject "NiuNiuVideoLearning" */;
-			developmentRegion = en;
+			developmentRegion = "zh-Hans";
 			hasScannedForEncodings = 0;
 			knownRegions = (
-				en,
 				Base,
+				"zh-Hans",
 			);
 			mainGroup = B8A7131B2E58B89700AC57A8;
 			minimizedProjectReferenceProxies = 1;

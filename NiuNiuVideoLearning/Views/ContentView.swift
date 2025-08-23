@@ -15,9 +15,10 @@ struct ContentView: View {
 
     @State private var showAddCollection = false
     @State private var showAddVideo = false
-
-    // ✅ 当前选中的视频
     @State private var selectedVideo: Videos?
+
+    // ✅ 播放控制器（父级持有）
+    @StateObject private var playerCtl = PlayerController()
 
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \Collections.date, ascending: false)],
@@ -60,31 +61,46 @@ struct ContentView: View {
                 VideoDetailPlayer(
                     filePath: path,
                     title: video.name ?? "未命名视频",
-                    fileBookmark: video.fileBookmark   // ✅ 新增
+                    fileBookmark: video.fileBookmark,
+                    controller: playerCtl            // ✅ 传控制器
                 )
             } else {
                 Text("右侧内容区域").foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("牛牛看课")
+        // ✅ 动态标题：选中视频名，否则默认
+        .navigationTitle(selectedVideo?.name ?? "牛牛看课")
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                HStack{
-                    Button(action: { showAddCollection = true }) {
-                        Image(systemName: "folder.badge.plus")
-                    }
-                    .help("新建课程")
-                    .sheet(isPresented: $showAddCollection){
-                        AddCollectionView()
-                    }
+                HStack {
+                    Button(action: { showAddCollection = true }) { Image(systemName: "folder.badge.plus") }
+                        .help("新建课程")
+                        .sheet(isPresented: $showAddCollection) { AddCollectionView() }
 
-                    Button(action: { showAddVideo = true }) {
-                        Image(systemName: "video.badge.plus")
+                    Button(action: { showAddVideo = true }) { Image(systemName: "video.badge.plus") }
+                        .help("导入课程视频")
+                        .sheet(isPresented: $showAddVideo) { AddVideoView() }
+                }
+            }
+
+            // ✅ 这里放播放控制（可以随意换 placement）
+            ToolbarItem(placement: .cancellationAction) {
+                HStack(spacing: 14) {
+                    Button {
+                        playerCtl.restart()
+                    } label: {
+                        Image(systemName: "gobackward")  // 重播
                     }
-                    .help("导入课程视频")
-                    .sheet(isPresented: $showAddVideo){
-                        AddVideoView()
+                    .disabled(selectedVideo == nil)
+                    .help("重播")
+
+                    Button {
+                        playerCtl.togglePlay()
+                    } label: {
+                        Image(systemName: playerCtl.isPlaying ? "pause.fill" : "play.fill")
                     }
+                    .disabled(selectedVideo == nil)
+                    .help(playerCtl.isPlaying ? "暂停" : "播放")
                 }
             }
         }
@@ -204,7 +220,7 @@ struct VideosForCollectionView: View {
                     // ✅ 点击整行，触发 onSelect(video)
                     VideoRow(video: video)
                         .contentShape(Rectangle())
-                        .onTapGesture {
+                        .onTapGesture(count: 2){
                             onSelect(video)
                         }
                         .contextMenu {
@@ -401,6 +417,8 @@ struct VideoDetailPlayer: View {
     let filePath: String
     let title: String
     var fileBookmark: Data? = nil
+    
+    @ObservedObject var controller: PlayerController
 
     @State private var player = AVPlayer()
     @State private var scopedURL: URL?
@@ -408,18 +426,6 @@ struct VideoDetailPlayer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(title).font(.headline)
-                Spacer()
-                Button(action: { player.seek(to: .zero); player.play() }){
-                    Image(systemName: "gobackward")
-                }
-                Button(action: { player.timeControlStatus == .playing ? player.pause() : player.play() }){
-                    Image(systemName: player.timeControlStatus == .playing ? "pause.fill" : "play.fill")
-                }
-            }
-            .padding().background(.bar)
-
             if let errorText {
                 ZStack {
                     Color.secondary.opacity(0.08)
@@ -432,7 +438,10 @@ struct VideoDetailPlayer: View {
                 VideoPlayer(player: player)
             }
         }
-        .onAppear { prepareAndPlay() }
+        .onAppear {
+            controller.attach(player)
+            prepareAndPlay()
+        }
         .onChange(of: filePath) { _ in prepareAndPlay() }
         .onDisappear {
             if let url = scopedURL { url.stopAccessingSecurityScopedResource(); scopedURL = nil }
@@ -504,6 +513,32 @@ struct VideoDetailPlayer: View {
                 self.player.replaceCurrentItem(with: item)
             }
         }
+    }
+}
+
+final class PlayerController: ObservableObject {
+    @Published var isPlaying = false
+
+    private weak var player: AVPlayer?
+
+    func attach(_ player: AVPlayer) { self.player = player }
+
+    func togglePlay() {
+        guard let p = player else { return }
+        if p.timeControlStatus == .playing {
+            p.pause()
+            isPlaying = false
+        } else {
+            p.play()
+            isPlaying = true
+        }
+    }
+
+    func restart() {
+        guard let p = player else { return }
+        p.seek(to: .zero)
+        p.play()
+        isPlaying = true
     }
 }
 
