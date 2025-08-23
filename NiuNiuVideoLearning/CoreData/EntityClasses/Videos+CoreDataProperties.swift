@@ -29,6 +29,7 @@ extension Videos {
     @NSManaged public var name: String?
     @NSManaged public var playCount: Int64
     @NSManaged public var tag: String?
+    @NSManaged public var fileBookmark: Data?
 
 }
 

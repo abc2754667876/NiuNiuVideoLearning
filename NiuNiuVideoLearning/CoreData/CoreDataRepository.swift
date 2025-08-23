@@ -43,12 +43,13 @@ func addVideo(
     filePosition: String?,
     fileSize: Int64,
     name: String,
-    tag: String? = nil
+    tag: String? = nil,
+    fileBookmark: Data? = nil              // ✅ 新增
 ) {
     let video = Videos(context: context)
-    video.id = UUID()                 // 新的唯一 ID
-    video.collection = collection     // 关联的课程集 UUID
-    video.date = date                 // 创建日期
+    video.id = UUID()
+    video.collection = collection
+    video.date = date
     video.duration = duration
     video.exist = exist
     video.fileHash = fileHash
@@ -56,12 +57,13 @@ func addVideo(
     video.fileSize = fileSize
     video.name = name
     video.tag = tag
-    
+    video.fileBookmark = fileBookmark      // ✅ 保存书签
+
     // 默认值
     video.isFinished = false
     video.lastPosition = 0.0
     video.playCount = 0
-    
+
     do {
         try context.save()
     } catch {
@@ -110,36 +112,73 @@ func updateLastPosition(id: UUID, lastPosition: Double, context: NSManagedObject
 // MARK: - 2. 更新 filePosition, fileHash, fileSize
 /// 更新特定 id 的 video 的 filePosition、fileHash、fileSize
 /// fileHash 使用 SHA256 计算，fileSize 使用文件属性获取
-func updateVideoFileInfo(id: UUID, newPath: String, context: NSManagedObjectContext) {
+func updateVideoFileInfo(
+    id: UUID,
+    newPath: String,
+    bookmark: Data?,                                  // ✅ 新增
+    context: NSManagedObjectContext
+) {
     let request: NSFetchRequest<Videos> = Videos.fetchRequest()
     request.predicate = NSPredicate(format: "id == %@", id as CVarArg)
     request.fetchLimit = 1
+
     do {
-        if let video = try context.fetch(request).first {
-            let url = URL(fileURLWithPath: newPath)
-            video.filePosition = newPath
-            
-            // 获取文件大小
-            if let attr = try? FileManager.default.attributesOfItem(atPath: newPath),
-               let size = attr[.size] as? NSNumber {
-                video.fileSize = size.int64Value
-            } else {
-                video.fileSize = 0
-            }
-            
-            // 计算文件 hash（SHA256）
-            if let data = try? Data(contentsOf: url) {
-                let digest = SHA256.hash(data: data)
-                video.fileHash = digest.compactMap { String(format: "%02x", $0) }.joined()
-            } else {
-                video.fileHash = nil
-            }
-            
-            try context.save()
-            print("✅ 更新文件信息成功: \(newPath)")
-        } else {
+        guard let video = try context.fetch(request).first else {
             print("⚠️ 未找到视频 \(id)")
+            return
         }
+
+        var accessedURL: URL?
+        var url: URL = URL(fileURLWithPath: newPath)
+
+        // ✅ 若提供了 bookmark，优先解析并进入安全作用域
+        if let bookmark = bookmark {
+            var isStale = false
+            do {
+                let scopedURL = try URL(resolvingBookmarkData: bookmark,
+                                        options: [.withSecurityScope],
+                                        relativeTo: nil,
+                                        bookmarkDataIsStale: &isStale)
+                if scopedURL.startAccessingSecurityScopedResource() {
+                    accessedURL = scopedURL
+                    url = scopedURL
+                } else {
+                    print("❌ 无法进入安全作用域，回退用路径读取")
+                }
+            } catch {
+                print("❌ 解析书签失败: \(error.localizedDescription)")
+            }
+        }
+
+        // ✅ 入库：路径 + 书签
+        video.filePosition = newPath
+        if let bookmark { video.fileBookmark = bookmark }
+
+        // ✅ 读取文件大小
+        if let attr = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attr[.size] as? NSNumber {
+            video.fileSize = size.int64Value
+        } else {
+            video.fileSize = 0
+        }
+
+        // ✅ 计算 SHA256（尽量用解锁后的 URL）
+        if let data = try? Data(contentsOf: url) {
+            let digest = SHA256.hash(data: data)
+            video.fileHash = digest.map { String(format: "%02x", $0) }.joined()
+        } else {
+            video.fileHash = nil
+        }
+
+        // ✅ 更新 exist
+        video.exist = FileManager.default.fileExists(atPath: url.path)
+
+        try context.save()
+        print("✅ 更新文件信息成功: \(newPath)（bookmark: \(bookmark != nil)）")
+
+        // ✅ 退出作用域
+        if let u = accessedURL { u.stopAccessingSecurityScopedResource() }
+
     } catch {
         print("❌ 更新文件信息失败: \(error)")
     }

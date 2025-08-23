@@ -27,36 +27,43 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            ScrollView{
-                VStack(spacing: 8){
-                    ForEach(collections.indices, id: \.self) { index in
-                        let col = collections[index]
-                        CustomDisclosureRow(
-                            title: col.name ?? "未命名",
-                            color: tags[Int(col.tag)].color,
-                            collection: col,
-                            // ✅ 把“选中视频”的回调从最外层传进去
-                            onSelectVideo: { video in
-                                selectedVideo = video
-                            }
-                        )
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 8)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            if collections.isEmpty {
+                Text("请先创建课程")
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView{
+                    VStack(spacing: 8){
+                        ForEach(collections.indices, id: \.self) { index in
+                            let col = collections[index]
+                            CustomDisclosureRow(
+                                title: col.name ?? "未命名",
+                                color: tags[Int(col.tag)].color,
+                                collection: col,
+                                // ✅ 把“选中视频”的回调从最外层传进去
+                                onSelectVideo: { video in
+                                    selectedVideo = video
+                                }
+                            )
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        }
                     }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
                 }
-                .padding(.horizontal)
-                .padding(.top, 8)
             }
         } detail: {
             if let video = selectedVideo,
                let path = video.filePosition?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !path.isEmpty,
-               FileManager.default.fileExists(atPath: path) {
-                VideoDetailPlayer(filePath: path, title: video.name ?? "未命名视频")
+               !path.isEmpty {
+                VideoDetailPlayer(
+                    filePath: path,
+                    title: video.name ?? "未命名视频",
+                    fileBookmark: video.fileBookmark   // ✅ 新增
+                )
             } else {
-                Text("右侧内容区域")
-                    .foregroundStyle(.secondary)
+                Text("右侧内容区域").foregroundStyle(.secondary)
             }
         }
         .navigationTitle("牛牛看课")
@@ -264,8 +271,24 @@ struct VideosForCollectionView: View {
                 presentAlert(title: "更新失败", message: "该视频缺少唯一标识符（id）。")
                 return
             }
-            updateVideoFileInfo(id: id, newPath: url.path, context: viewContext)
-            self.id = UUID()
+
+            // ✅ 生成 security-scoped bookmark
+            do {
+                let bookmark = try url.bookmarkData(
+                    options: [.withSecurityScope],
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                updateVideoFileInfo(
+                    id: id,
+                    newPath: url.path,
+                    bookmark: bookmark,         // ✅ 传 bookmark
+                    context: viewContext
+                )
+                self.id = UUID()
+            } catch {
+                presentAlert(title: "保存授权失败", message: error.localizedDescription)
+            }
         } else {
             presentAlert(
                 title: "文件名与记录不一致",
@@ -377,52 +400,110 @@ struct VideoRow: View {
 struct VideoDetailPlayer: View {
     let filePath: String
     let title: String
+    var fileBookmark: Data? = nil
 
     @State private var player = AVPlayer()
+    @State private var scopedURL: URL?
+    @State private var errorText: String?
 
     var body: some View {
         VStack(spacing: 0) {
-            // 标题栏
             HStack {
-                Text(title)
-                    .font(.headline)
+                Text(title).font(.headline)
                 Spacer()
-                Button {
-                    player.seek(to: .zero)
-                    player.play()
-                } label: {
+                Button(action: { player.seek(to: .zero); player.play() }){
                     Image(systemName: "gobackward")
                 }
-                Button {
-                    if player.timeControlStatus == .playing {
-                        player.pause()
-                    } else {
-                        player.play()
-                    }
-                } label: {
+                Button(action: { player.timeControlStatus == .playing ? player.pause() : player.play() }){
                     Image(systemName: player.timeControlStatus == .playing ? "pause.fill" : "play.fill")
                 }
             }
-            .padding()
-            .background(.bar)
-            
-            // 播放器
-            VideoPlayer(player: player)
-                .onAppear { replaceItemAndPlay() }
-                .onChange(of: filePath) { _ in
-                    replaceItemAndPlay()
+            .padding().background(.bar)
+
+            if let errorText {
+                ZStack {
+                    Color.secondary.opacity(0.08)
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle)
+                        Text(errorText).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    }.padding()
                 }
+            } else {
+                VideoPlayer(player: player)
+            }
         }
-        .onAppear{
-            print(filePath)
+        .onAppear { prepareAndPlay() }
+        .onChange(of: filePath) { _ in prepareAndPlay() }
+        .onDisappear {
+            if let url = scopedURL { url.stopAccessingSecurityScopedResource(); scopedURL = nil }
         }
     }
 
-    private func replaceItemAndPlay() {
-        let url = URL(fileURLWithPath: filePath)
-        let item = AVPlayerItem(url: url)
-        player.replaceCurrentItem(with: item)
-        player.play()
+    private func preparedURL() -> URL? {
+        // 1) 优先用 bookmark 解锁
+        if let data = fileBookmark {
+            var stale = false
+            do {
+                let url = try URL(resolvingBookmarkData: data,
+                                  options: [.withSecurityScope],
+                                  relativeTo: nil,
+                                  bookmarkDataIsStale: &stale)
+                if url.startAccessingSecurityScopedResource() {
+                    scopedURL = url
+                    return url
+                } else {
+                    print("❌ 无法进入安全作用域")
+                }
+            } catch { print("❌ 解析书签失败:", error.localizedDescription) }
+        }
+        // 2) 回退用路径（若无权限可能仍失败）
+        return URL(fileURLWithPath: filePath)
+    }
+
+    private func prepareAndPlay() {
+        errorText = nil
+
+        guard let url = preparedURL() else {
+            errorText = "无法构造视频 URL。"
+            return
+        }
+
+        let asset = AVURLAsset(url: url)
+        let keys = ["playable", "hasProtectedContent", "tracks"]
+        asset.loadValuesAsynchronously(forKeys: keys) {
+            var message: String?
+
+            for key in keys {
+                var err: NSError?
+                let status = asset.statusOfValue(forKey: key, error: &err)
+                if status == .failed || status == .cancelled {
+                    message = "读取媒体信息失败（\(key)）：\(err?.localizedDescription ?? "未知错误")"
+                    break
+                }
+            }
+            if message == nil {
+                if asset.hasProtectedContent { message = "此视频受保护/加密（DRM），无法播放。" }
+                else if !asset.isPlayable { message = "视频不可播放（容器或编码不受支持）。" }
+            }
+
+            DispatchQueue.main.async {
+                if let message { self.errorText = message; return }
+
+                let item = AVPlayerItem(asset: asset)
+                _ = item.observe(\.status, options: [.new, .initial]) { item, _ in
+                    DispatchQueue.main.async {
+                        switch item.status {
+                        case .readyToPlay: self.player.play()
+                        case .failed:
+                            self.errorText = "播放失败：\(item.error?.localizedDescription ?? "未知错误")"
+                        case .unknown: break
+                        @unknown default: break
+                        }
+                    }
+                }
+                self.player.replaceCurrentItem(with: item)
+            }
+        }
     }
 }
 

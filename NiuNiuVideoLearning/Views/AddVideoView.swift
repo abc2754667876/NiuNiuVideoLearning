@@ -15,11 +15,12 @@ import AppKit
 // 临时数据模型
 struct PickedVideo: Identifiable, Hashable {
     let id = UUID()
-    let duration: Double          // 秒
-    let hash: String              // SHA256
-    let path: String              // 绝对路径
-    let fileSize: Int64           // 字节
-    let fileName: String          // 不含扩展名
+    let duration: Double
+    let hash: String
+    let path: String
+    let fileSize: Int64
+    let fileName: String
+    let bookmark: Data              // ✅ 新增：持久化访问授权
 }
 
 struct AddVideoView: View {
@@ -143,7 +144,16 @@ struct AddVideoView: View {
     // MARK: - 添加视频到coredata
     private func addVideos() {
         for video in pickedVideos {
-            addVideo(context: viewContext, collection: selectedID, duration: video.duration, fileHash: video.hash, filePosition: video.path, fileSize: video.fileSize, name: video.fileName)
+            addVideo(
+                context: viewContext,
+                collection: selectedID,
+                duration: video.duration,
+                fileHash: video.hash,
+                filePosition: video.path,
+                fileSize: video.fileSize,
+                name: video.fileName,
+                fileBookmark: video.bookmark          // ✅ 新增：入库 bookmark
+            )
         }
     }
     
@@ -156,8 +166,7 @@ struct AddVideoView: View {
         panel.allowedContentTypes = [.movie, .video, .mpeg4Movie, .quickTimeMovie]
         panel.prompt = "选择"
         if panel.runModal() == .OK {
-            // 解析每个文件
-            Task.detached { // 避免主线程阻塞（计算哈希可能较慢）
+            Task.detached {
                 var newOnes: [PickedVideo] = []
                 for url in panel.urls {
                     if let v = await makePickedVideo(from: url) {
@@ -165,8 +174,7 @@ struct AddVideoView: View {
                     }
                 }
                 await MainActor.run {
-                    // 去重：同路径只保留一个
-                    let existingPaths = Set(pickedVideos.map{$0.path})
+                    let existingPaths = Set(pickedVideos.map { $0.path })
                     let filtered = newOnes.filter { !existingPaths.contains($0.path) }
                     pickedVideos.append(contentsOf: filtered)
                 }
@@ -176,27 +184,57 @@ struct AddVideoView: View {
 
     // MARK: - 元数据解析
     private func makePickedVideo(from url: URL) async -> PickedVideo? {
+        // ✅ 为该 URL 生成 security-scoped bookmark（用于跨重启访问）
+        let bookmark: Data
+        do {
+            bookmark = try url.bookmarkData(options: [.withSecurityScope],
+                                            includingResourceValuesForKeys: nil,
+                                            relativeTo: nil)
+        } catch {
+            print("❌ 生成书签失败：\(error.localizedDescription)")
+            return nil
+        }
+
+        // ✅ 进入作用域以便读取元数据（时长 / 大小 / 哈希）
+        var didAccess = false
+        var scopedURL = url
+        if url.startAccessingSecurityScopedResource() {
+            didAccess = true
+        } else {
+            // 某些情况下 NSOpenPanel 返回的 URL 在当前会话已可读；若失败也尝试继续使用
+            // 可根据需要决定是否在此直接 return
+            print("⚠️ 未能进入安全作用域，尝试直接读取")
+        }
+
+        defer {
+            if didAccess { scopedURL.stopAccessingSecurityScopedResource() }
+        }
+
         // 时长
-        let asset = AVURLAsset(url: url)
+        let asset = AVURLAsset(url: scopedURL)
         let seconds = CMTimeGetSeconds(asset.duration)
 
         // 文件大小
-        let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let fileSize = (try? scopedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+            .map(Int64.init) ?? 0
 
         // 文件名（无后缀）
-        let name = url.deletingPathExtension().lastPathComponent
+        let name = scopedURL.deletingPathExtension().lastPathComponent
 
         // 绝对路径
-        let path = url.path
+        let path = scopedURL.path
 
-        // 哈希（SHA256）
-        guard let sha = sha256Hex(of: url) else { return nil }
+        // 哈希（SHA256）——用作用域内的 URL 读取
+        guard let sha = sha256Hex(of: scopedURL) else { return nil }
 
-        return PickedVideo(duration: seconds,
-                           hash: sha,
-                           path: path,
-                           fileSize: fileSize,
-                           fileName: name)
+        return PickedVideo(
+            duration: seconds,
+            hash: sha,
+            path: path,
+            fileSize: fileSize,
+            fileName: name,
+            bookmark: bookmark                  // ✅ 带回书签
+        )
     }
 
     // MARK: - 工具：SHA256（流式）
