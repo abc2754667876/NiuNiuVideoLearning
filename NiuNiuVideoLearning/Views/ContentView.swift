@@ -15,7 +15,50 @@ struct ContentView: View {
 
     @State private var showAddCollection = false
     @State private var showAddVideo = false
+    @State private var showSpeedPopover = false
+    @State private var setRate: Float = 1.0
     @State private var selectedVideo: Videos?
+    
+    @State private var now = Date()   // 用来触发时间刷新
+
+    // 定时器，每隔 30 秒刷新一次（避免时间不动）
+    private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+
+    var estimatedEndTime: String? {
+        guard playerCtl.isPlaying,
+              let video = selectedVideo else { return nil }
+
+        let played = playerCtl.currentTime              // ✅ 实时进度（秒）
+        let duration = video.duration
+        let remain = max(duration - played, 0)
+        // 过短或倍速接近 0 就不显示，避免异常
+        guard remain > 1, playerCtl.rate >= 0.05 else { return nil }
+
+        // 实际需要的“现实时间秒数”（考虑倍速）
+        let realSeconds = remain / Double(playerCtl.rate)
+
+        // 可选：取整到“下一分钟”避免秒级抖动
+        let end = Date().addingTimeInterval(realSeconds)
+        let endRoundedToMinute = Calendar.current.date(bySetting: .second, value: 0,
+                                      of: end.addingTimeInterval(60)) ?? end
+
+        let cal = Calendar.current
+        let timeFmt = DateFormatter()
+        timeFmt.dateFormat = "HH:mm"
+
+        var prefix = ""
+        if !cal.isDateInToday(endRoundedToMinute) {
+            if cal.isDateInTomorrow(endRoundedToMinute) {
+                prefix = "明日 "
+            } else {
+                let dayFmt = DateFormatter()
+                dayFmt.dateFormat = "MM-dd "
+                prefix = dayFmt.string(from: endRoundedToMinute)
+            }
+        }
+
+        return "\(prefix)\(timeFmt.string(from: endRoundedToMinute))"
+    }
 
     // ✅ 播放控制器（父级持有）
     @StateObject private var playerCtl = PlayerController()
@@ -86,13 +129,26 @@ struct ContentView: View {
             // ✅ 这里放播放控制（可以随意换 placement）
             ToolbarItem(placement: .cancellationAction) {
                 HStack(spacing: 14) {
-                    Button {
-                        playerCtl.restart()
-                    } label: {
-                        Image(systemName: "gobackward")  // 重播
+                    // ✅ 显示预计结束时间
+                    if let end = estimatedEndTime {
+                        Text("将于\(end)结束")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    
+                    Button {
+                        showSpeedPopover.toggle()
+                    } label: {
+                        Label("播放速度", systemImage: "speedometer")
+                    }
+                    .help("调节播放速度")
                     .disabled(selectedVideo == nil)
-                    .help("重播")
+                    .popover(isPresented: $showSpeedPopover, arrowEdge: .top) {
+                        SpeedPopoverView(controller: playerCtl, setRate: $setRate)
+                            .frame(width: 280)
+                            .padding()
+                        // macOS 风格的小气泡
+                    }
 
                     Button {
                         playerCtl.togglePlay()
@@ -102,8 +158,62 @@ struct ContentView: View {
                     .disabled(selectedVideo == nil)
                     .help(playerCtl.isPlaying ? "暂停" : "播放")
                 }
+                .onChange(of: playerCtl.isPlaying) {
+                    playerCtl.setRate(setRate)
+                }
             }
         }
+        .onReceive(timer) { date in
+            now = date
+        }
+    }
+}
+
+struct SpeedPopoverView: View {
+    @ObservedObject var controller: PlayerController
+    
+    //@State private var tempRate: Float = 1.0
+    @Binding var setRate: Float
+    
+    private let presets: [Float] = [0.75, 1.0, 1.25, 1.5, 2.0]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack{
+                Text("播放速度:\(String(format: "%.2fx", setRate))").font(.headline)
+                
+                Spacer()
+                
+                Button(action: {
+                    setRate = 1.0
+                    controller.setRate(1.0)
+                }){
+                    Image(systemName: "arrow.counterclockwise")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            
+            Slider(value: Binding(
+                get: { Double(setRate) },
+                set: { newVal in
+                    setRate = Float(newVal)
+                    controller.setRate(setRate)
+                }),
+                   in: 0.1...4.0, step: 0.1)
+            
+            // 常用预设
+            HStack {
+                ForEach(presets, id: \.self) { r in
+                    Button(String(format: "%.2fx", r)) {
+                        setRate = r
+                        controller.setRate(r)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .onAppear { setRate = controller.rate }
     }
 }
 
@@ -423,6 +533,13 @@ struct VideoDetailPlayer: View {
     @State private var player = AVPlayer()
     @State private var scopedURL: URL?
     @State private var errorText: String?
+    
+    // ✅ 新增：KVO/通知句柄
+    @State private var statusObs: NSKeyValueObservation?
+    @State private var rateObs: NSKeyValueObservation?
+    @State private var endObserver: Any?
+    
+    @State private var enforceTimer: Timer?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -439,13 +556,72 @@ struct VideoDetailPlayer: View {
             }
         }
         .onAppear {
-            controller.attach(player)
+            controller.attach(player)          // 让 Toolbar 能控制它
+            attachObservers()                  // ✅ 监听系统控件触发的状态改变
             prepareAndPlay()
         }
         .onChange(of: filePath) { _ in prepareAndPlay() }
         .onDisappear {
+            detachObservers()
             if let url = scopedURL { url.stopAccessingSecurityScopedResource(); scopedURL = nil }
         }
+        .onReceive(controller.$rate) { _ in
+            if controller.isPlaying { startRateGovernor() }
+        }
+    }
+    
+    private func startRateGovernor() {
+        enforceTimer?.invalidate()
+        guard Date() < controller.enforceUntil else { return }
+
+        // 立即校正一次
+        player.currentItem?.audioTimePitchAlgorithm = .timeDomain
+        player.rate = controller.rate
+
+        // 之后在强制期内每 50ms 纠正一次
+        enforceTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { t in
+            if Date() > controller.enforceUntil || abs(self.player.rate - self.controller.rate) <= 0.01 {
+                t.invalidate()
+                return
+            }
+            self.player.rate = self.controller.rate
+        }
+    }
+    
+    // MARK: - 监听/同步
+    private func attachObservers() {
+        // 1) timeControlStatus（暂停/播放/缓冲）
+        statusObs = player.observe(\.timeControlStatus, options: [.initial, .new]) { p, _ in
+            DispatchQueue.main.async {
+                let playing = (p.timeControlStatus == .playing) ||
+                              (p.timeControlStatus == .waitingToPlayAtSpecifiedRate && p.rate > 0)
+                controller.isPlaying = playing
+                if playing { startRateGovernor() }
+            }
+        }
+        // 2) rate（有些系统控件会直接改 rate）
+        rateObs = player.observe(\.rate, options: [.new]) { p, _ in
+            DispatchQueue.main.async {
+                controller.isPlaying = p.rate > 0
+                if p.rate > 0 {               // 仅播放中才认为是“有效倍速”
+                    controller.syncFromPlayer(rate: p.rate)
+                }
+            }
+        }
+        // 3) 播放结束通知
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: nil, queue: .main
+        ) { [weak controller] _ in
+            controller?.isPlaying = false
+        }
+    }
+
+    private func detachObservers() {
+        statusObs?.invalidate(); statusObs = nil
+        rateObs?.invalidate();   rateObs   = nil
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        endObserver = nil
     }
 
     private func preparedURL() -> URL? {
@@ -502,7 +678,7 @@ struct VideoDetailPlayer: View {
                 _ = item.observe(\.status, options: [.new, .initial]) { item, _ in
                     DispatchQueue.main.async {
                         switch item.status {
-                        case .readyToPlay: self.player.play()
+                        case .readyToPlay: self.player.playImmediately(atRate: controller.rate)
                         case .failed:
                             self.errorText = "播放失败：\(item.error?.localizedDescription ?? "未知错误")"
                         case .unknown: break
@@ -511,6 +687,13 @@ struct VideoDetailPlayer: View {
                     }
                 }
                 self.player.replaceCurrentItem(with: item)
+                self.player.currentItem?.audioTimePitchAlgorithm = .timeDomain
+                if controller.isPlaying {
+                    self.player.playImmediately(atRate: controller.rate)
+                    startRateGovernor()
+                } else {
+                    self.player.rate = 0
+                }
             }
         }
     }
@@ -518,10 +701,28 @@ struct VideoDetailPlayer: View {
 
 final class PlayerController: ObservableObject {
     @Published var isPlaying = false
+    @Published var rate: Float = 1.0
+    @Published var currentTime: Double = 0   // ✅ 当前播放秒数（动态刷新）
 
     private weak var player: AVPlayer?
+    private var programmaticRateChange = false
+    fileprivate var enforceUntil: Date = .distantPast
 
-    func attach(_ player: AVPlayer) { self.player = player }
+    private var timeObserver: Any?
+
+    func attach(_ player: AVPlayer) {
+        self.player = player
+        player.automaticallyWaitsToMinimizeStalling = true
+        applyRateToPlayer()
+
+        // ✅ 每 0.5 秒刷新一次 currentTime
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] t in
+            self?.currentTime = t.seconds
+        }
+    }
 
     func togglePlay() {
         guard let p = player else { return }
@@ -529,16 +730,45 @@ final class PlayerController: ObservableObject {
             p.pause()
             isPlaying = false
         } else {
-            p.play()
+            p.playImmediately(atRate: rate)
             isPlaying = true
+            // 恢复播放也进入短时强制期
+            enforceUntil = Date().addingTimeInterval(1.0)
         }
     }
 
     func restart() {
         guard let p = player else { return }
         p.seek(to: .zero)
-        p.play()
+        p.playImmediately(atRate: rate)
         isPlaying = true
+        enforceUntil = Date().addingTimeInterval(1.0)
+    }
+
+    func setRate(_ newRate: Float) {
+        guard abs(rate - newRate) > 0.001 else { return }
+        rate = newRate
+        enforceUntil = Date().addingTimeInterval(1.0) // 外层改速 -> 进入强制期
+        applyRateToPlayer()
+    }
+
+    func syncFromPlayer(rate actual: Float) {
+        guard !programmaticRateChange, abs(actual - rate) > 0.01 else { return }
+        // 如果不是强制期，允许从系统 UI 同步进来
+        if Date() > enforceUntil { rate = actual }
+    }
+
+    private func applyRateToPlayer() {
+        guard let p = player else { return }
+        programmaticRateChange = true
+        defer { programmaticRateChange = false }
+
+        p.currentItem?.audioTimePitchAlgorithm = .timeDomain
+        if isPlaying { p.rate = rate } else { p.rate = 0 }
+    }
+    
+    deinit {
+        if let player, let timeObserver { player.removeTimeObserver(timeObserver) }
     }
 }
 
