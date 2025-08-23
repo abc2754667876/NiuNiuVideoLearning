@@ -7,19 +7,24 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import AVKit
 
 struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
-    
+    @Environment(\.managedObjectContext) private var viewContext
+
     @State private var showAddCollection = false
     @State private var showAddVideo = false
-    
+
+    // ✅ 当前选中的视频
+    @State private var selectedVideo: Videos?
+
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \Collections.date, ascending: false)],
         animation: .default
     )
     private var collections: FetchedResults<Collections>
-    
+
     var body: some View {
         NavigationSplitView {
             ScrollView{
@@ -29,7 +34,11 @@ struct ContentView: View {
                         CustomDisclosureRow(
                             title: col.name ?? "未命名",
                             color: tags[Int(col.tag)].color,
-                            collection: col
+                            collection: col,
+                            // ✅ 把“选中视频”的回调从最外层传进去
+                            onSelectVideo: { video in
+                                selectedVideo = video
+                            }
                         )
                         .padding(.vertical, 6)
                         .padding(.horizontal, 8)
@@ -40,7 +49,15 @@ struct ContentView: View {
                 .padding(.top, 8)
             }
         } detail: {
-            Text("右侧内容区域")
+            if let video = selectedVideo,
+               let path = video.filePosition?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !path.isEmpty,
+               FileManager.default.fileExists(atPath: path) {
+                VideoDetailPlayer(filePath: path, title: video.name ?? "未命名视频")
+            } else {
+                Text("右侧内容区域")
+                    .foregroundStyle(.secondary)
+            }
         }
         .navigationTitle("牛牛看课")
         .toolbar {
@@ -53,7 +70,7 @@ struct ContentView: View {
                     .sheet(isPresented: $showAddCollection){
                         AddCollectionView()
                     }
-                    
+
                     Button(action: { showAddVideo = true }) {
                         Image(systemName: "video.badge.plus")
                     }
@@ -70,11 +87,14 @@ struct ContentView: View {
 // MARK: - 折叠行（带子列表）
 struct CustomDisclosureRow: View {
     @Environment(\.managedObjectContext) private var viewContext
-    
+
     let title: String
     let color: Color
     let collection: Collections
-    
+
+    // ✅ 新增：把点击某视频的事件往上抛
+    let onSelectVideo: (Videos) -> Void
+
     @State private var expanded = false
     @State private var showDeleteConfirm = false
 
@@ -112,10 +132,11 @@ struct CustomDisclosureRow: View {
             } message: {
                 Text("这将同时删除该课程下的所有视频，且无法恢复。")
             }
-            
+
             if expanded {
                 Divider().opacity(0.4)
-                VideosForCollectionView(collectionID: collection.id)
+                // ✅ 把 onSelectVideo 继续往子视图传
+                VideosForCollectionView(collectionID: collection.id, onSelect: onSelectVideo)
                     .padding(.leading)
             }
         }
@@ -125,22 +146,23 @@ struct CustomDisclosureRow: View {
 // MARK: - 子视图：某个 Collection 下的 Videos 实时列表
 struct VideosForCollectionView: View {
     @Environment(\.managedObjectContext) private var viewContext
-    
-    // 动态 FetchRequest：根据传入的 collectionID 过滤
+
+    // ✅ 新增：点击某行时回调
+    let onSelect: (Videos) -> Void
+
     @FetchRequest private var videos: FetchedResults<Videos>
-    
-    // 状态：文件选择器 & 警告弹窗
+
     @State private var showFileImporter = false
     @State private var alertMessage: String = ""
     @State private var showAlert = false
-    
-    // 临时保存：当前“重新链接”的目标 video（以及待处理的 URL）
+
     @State private var pendingVideo: Videos?
     @State private var pendingURL: URL?
-    
+
     @State private var id = UUID()
     
-    init(collectionID: UUID?) {
+    init(collectionID: UUID?, onSelect: @escaping (Videos) -> Void) {
+        self.onSelect = onSelect
         if let id = collectionID {
             _videos = FetchRequest(
                 entity: Videos.entity(),
@@ -149,7 +171,6 @@ struct VideosForCollectionView: View {
                 animation: .default
             )
         } else {
-            // 没有 id 的集合，返回空
             _videos = FetchRequest(
                 entity: Videos.entity(),
                 sortDescriptors: [],
@@ -173,16 +194,21 @@ struct VideosForCollectionView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(videos) { video in
+                    // ✅ 点击整行，触发 onSelect(video)
                     VideoRow(video: video)
                         .contentShape(Rectangle())
+                        .onTapGesture {
+                            onSelect(video)
+                        }
                         .contextMenu {
                             Button("重新链接") {
                                 pendingVideo = video
                                 showFileImporter = true
                             }
-                            .disabled(video.exist) // 已存在就不需要重新链接
-                            
-                            Button("删除当前视频") { deleteVideo(id: video.id!, context: viewContext) }
+                            .disabled(video.exist)
+                            Button("删除当前视频") {
+                                deleteVideo(id: video.id!, context: viewContext)
+                            }
                         }
                     Divider().opacity(0.15)
                 }
@@ -345,6 +371,58 @@ struct VideoRow: View {
                 }
             }
         }
+    }
+}
+
+struct VideoDetailPlayer: View {
+    let filePath: String
+    let title: String
+
+    @State private var player = AVPlayer()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题栏
+            HStack {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                Button {
+                    player.seek(to: .zero)
+                    player.play()
+                } label: {
+                    Image(systemName: "gobackward")
+                }
+                Button {
+                    if player.timeControlStatus == .playing {
+                        player.pause()
+                    } else {
+                        player.play()
+                    }
+                } label: {
+                    Image(systemName: player.timeControlStatus == .playing ? "pause.fill" : "play.fill")
+                }
+            }
+            .padding()
+            .background(.bar)
+            
+            // 播放器
+            VideoPlayer(player: player)
+                .onAppear { replaceItemAndPlay() }
+                .onChange(of: filePath) { _ in
+                    replaceItemAndPlay()
+                }
+        }
+        .onAppear{
+            print(filePath)
+        }
+    }
+
+    private func replaceItemAndPlay() {
+        let url = URL(fileURLWithPath: filePath)
+        let item = AVPlayerItem(url: url)
+        player.replaceCurrentItem(with: item)
+        player.play()
     }
 }
 
