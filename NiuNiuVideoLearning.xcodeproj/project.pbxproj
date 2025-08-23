@@ -13,6 +13,7 @@
 		B8A7141A2E58C46500AC57A8 /* VideoBookmarks+CoreDataClass.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A714132E58C46500AC57A8 /* VideoBookmarks+CoreDataClass.swift */; };
 		B8A7141B2E58C46500AC57A8 /* VideoBookmarks+CoreDataProperties.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A714142E58C46500AC57A8 /* VideoBookmarks+CoreDataProperties.swift */; };
 		B8A7141C2E58C46500AC57A8 /* Videos+CoreDataProperties.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A714162E58C46500AC57A8 /* Videos+CoreDataProperties.swift */; };
+		B8A714522E597A6B00AC57A8 /* .gitignore in Resources */ = {isa = PBXBuildFile; fileRef = B8A714512E597A6700AC57A8 /* .gitignore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		B8A714142E58C46500AC57A8 /* VideoBookmarks+CoreDataProperties.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "VideoBookmarks+CoreDataProperties.swift"; path = "NiuNiuVideoLearning/CoreData/EntityClasses/VideoBookmarks+CoreDataProperties.swift"; sourceTree = "<group>"; };
 		B8A714152E58C46500AC57A8 /* Videos+CoreDataClass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Videos+CoreDataClass.swift"; path = "NiuNiuVideoLearning/CoreData/EntityClasses/Videos+CoreDataClass.swift"; sourceTree = "<group>"; };
 		B8A714162E58C46500AC57A8 /* Videos+CoreDataProperties.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Videos+CoreDataProperties.swift"; path = "NiuNiuVideoLearning/CoreData/EntityClasses/Videos+CoreDataProperties.swift"; sourceTree = "<group>"; };
+		B8A714512E597A6700AC57A8 /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -47,6 +49,7 @@
 		B8A7131B2E58B89700AC57A8 = {
 			isa = PBXGroup;
 			children = (
+				B8A714512E597A6700AC57A8 /* .gitignore */,
 				B8A714112E58C46500AC57A8 /* Collections+CoreDataClass.swift */,
 				B8A714122E58C46500AC57A8 /* Collections+CoreDataProperties.swift */,
 				B8A714132E58C46500AC57A8 /* VideoBookmarks+CoreDataClass.swift */,
@@ -130,6 +133,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B8A714522E597A6B00AC57A8 /* .gitignore in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
