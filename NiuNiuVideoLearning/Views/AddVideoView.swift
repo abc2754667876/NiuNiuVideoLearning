@@ -27,8 +27,12 @@ struct AddVideoView: View {
     @Environment(\.presentationMode) var presentationMode
     @Environment(\.managedObjectContext) private var viewContext
     
+    let preSelectedUUID: UUID?
+    let prePickedVideos: [String]
+    
     @State private var showAlert = false
     @State private var alertInfo = ""
+    @State private var loadingVideo = false
     
     @State private var selectedName: String = "请选择"
     @State private var selectedID: UUID? = nil
@@ -112,6 +116,10 @@ struct AddVideoView: View {
                 
                 Spacer()
                 
+                if loadingVideo {
+                    ProgressView()
+                }
+                
                 Button("取消"){
                     presentationMode.wrappedValue.dismiss()
                 }
@@ -138,6 +146,30 @@ struct AddVideoView: View {
             Button("确定", role: .cancel) { }
         } message: {
             Text(alertInfo)
+        }
+        .onAppear{
+            if preSelectedUUID != nil {
+                selectedID = preSelectedUUID
+            }
+            
+            if !prePickedVideos.isEmpty {
+                loadingVideo = true
+                Task.detached {
+                    var newOnes: [PickedVideo] = []
+                    for path in prePickedVideos {
+                        let url = URL(fileURLWithPath: path)
+                        if let v = await makePickedVideo(from: url) {
+                            newOnes.append(v)
+                        }
+                    }
+                    await MainActor.run {
+                        let existingPaths = Set(pickedVideos.map { $0.path })
+                        let filtered = newOnes.filter { !existingPaths.contains($0.path) }
+                        pickedVideos.append(contentsOf: filtered)
+                        loadingVideo = false
+                    }
+                }
+            }
         }
     }
     
@@ -166,6 +198,7 @@ struct AddVideoView: View {
         panel.allowedContentTypes = [.movie, .video, .mpeg4Movie, .quickTimeMovie]
         panel.prompt = "选择"
         if panel.runModal() == .OK {
+            loadingVideo = true
             Task.detached {
                 var newOnes: [PickedVideo] = []
                 for url in panel.urls {
@@ -177,6 +210,7 @@ struct AddVideoView: View {
                     let existingPaths = Set(pickedVideos.map { $0.path })
                     let filtered = newOnes.filter { !existingPaths.contains($0.path) }
                     pickedVideos.append(contentsOf: filtered)
+                    loadingVideo = false
                 }
             }
         }
@@ -264,8 +298,4 @@ struct AddVideoView: View {
         while s >= 1024 && i < units.count-1 { s /= 1024; i += 1 }
         return String(format: "%.2f %@", s, units[i])
     }
-}
-
-#Preview {
-    AddVideoView()
 }

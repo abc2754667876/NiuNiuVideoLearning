@@ -128,7 +128,7 @@ struct ContentView: View {
 
                     Button(action: { showAddVideo = true }) { Image(systemName: "video.badge.plus") }
                         .help("导入课程视频")
-                        .sheet(isPresented: $showAddVideo) { AddVideoView() }
+                        .sheet(isPresented: $showAddVideo) { AddVideoView(preSelectedUUID: nil, prePickedVideos: []) }
                 }
             }
 
@@ -246,6 +246,11 @@ struct CustomDisclosureRow: View {
 
     @State private var expanded = false
     @State private var showDeleteConfirm = false
+    
+    // ✅ 新增：文件选择 & 结果
+    @State private var showFileImporter = false
+    @State private var pickedVideoPaths: [String] = []   // ← 选中的所有视频路径会存这里
+    @State private var showAddVideoView = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -268,6 +273,10 @@ struct CustomDisclosureRow: View {
             }
             .buttonStyle(.plain)
             .contextMenu {
+                Button("导入视频到当前课程") {
+                    pickedVideoPaths.removeAll()
+                    showFileImporter = true
+                }
                 Button("删除当前课程") { showDeleteConfirm = true }
             }
             .alert(
@@ -288,6 +297,42 @@ struct CustomDisclosureRow: View {
                 VideosForCollectionView(collectionID: collection.id, onSelect: onSelectVideo)
                     .padding(.leading)
             }
+        }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                // 统一成路径字符串，去重
+                let paths = urls.map { $0.path }
+                let unique = Array(Set(paths)).sorted()
+                pickedVideoPaths = unique
+
+                showAddVideoView = true
+
+            case .failure(let err):
+                print("❌ 选择文件失败：\(err.localizedDescription)")
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            // 先清空
+            pickedVideoPaths.removeAll()
+            let allowedUTIs: [UTType] = [.movie, .video, .mpeg4Movie, .quickTimeMovie]
+
+            // 过滤：按扩展名推断 UTI，再与允许的类型做 conforms
+            let filtered = urls.compactMap { url -> String? in
+                guard let ut = UTType(filenameExtension: url.pathExtension) else { return nil }
+                return allowedUTIs.contains(where: { ut.conforms(to: $0) }) ? url.path : nil
+            }
+
+            pickedVideoPaths = Array(Set(filtered)).sorted()
+            showAddVideoView = true
+            return !pickedVideoPaths.isEmpty
+        }
+        .sheet(isPresented: $showAddVideoView) {
+            AddVideoView(preSelectedUUID: collection.id, prePickedVideos: pickedVideoPaths)
         }
     }
 }
