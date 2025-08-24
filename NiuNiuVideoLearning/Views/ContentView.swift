@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 import AVKit
 
 struct ContentView: View {
+    @AppStorage("firstUse") private var firstUse = true
+    
     @Environment(\.openWindow) private var openWindow
     @Environment(\.managedObjectContext) private var viewContext
 
@@ -117,7 +119,9 @@ struct ContentView: View {
                 Text("暂无要播放的视频").foregroundStyle(.secondary)
             }
         }
-        // ✅ 动态标题：选中视频名，否则默认
+        .sheet(isPresented: $firstUse) {
+            FirstUseView()
+        }
         .navigationTitle(selectedVideo?.name ?? "牛牛看课")
         .toolbar {
             ToolbarItem(placement: .navigation) {
