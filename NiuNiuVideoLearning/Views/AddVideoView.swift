@@ -118,6 +118,7 @@ struct AddVideoView: View {
                 
                 if loadingVideo {
                     ProgressView()
+                        .scaleEffect(0.6)    // 把整个控件缩小到 60%
                 }
                 
                 Button("取消"){
